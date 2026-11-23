@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEMrush 反向链接 · 自动翻页导出当前页
 // @namespace    https://fontchanger.art/
-// @version      1.0.3
+// @version      1.1.0
 // @description  在已登录的 Semrush / 3ue 镜像反向链接列表页，自动「导出当前页」后点「Next」，直至最后一页
 // @author       foosher199
 // @updateURL    https://raw.githubusercontent.com/foosher199/BackLinkSourceBot/main/userscript/semrush-backlink-pager-export.user.js
@@ -104,107 +104,176 @@
     return null;
   }
 
-  const NEXT_LABELS = ["Next", "下一页", "下页", "›", "→"];
-
-  function isNextCandidate(el) {
-    if (!el || !isVisible(el)) return false;
-    const aria = norm(el.getAttribute("aria-label"));
-    const text = norm(el.textContent);
-    if (/previous|prev|上一|back/i.test(aria + " " + text)) return false;
-    if (/^next( page)?$/i.test(aria) || /下一页|下页/i.test(aria)) return true;
-    if (NEXT_LABELS.some((l) => text === l || text.toLowerCase() === l.toLowerCase())) return true;
-    if (text.length <= 4 && /next|›|→/i.test(text)) return true;
-    return false;
-  }
-
   function resolveClickable(el) {
-    return el.closest("button") || el.closest('[role="button"]') || el;
+    if (!el) return null;
+    if (el.tagName === "BUTTON") return el;
+    const btn = el.closest("button") || el.querySelector("button");
+    return btn || el;
   }
 
-  function paginationScopes() {
-    const scopes = [];
-    for (const sel of [
-      '[data-ui-name="Pagination"]',
-      '[data-test="pagination"]',
-      'nav[aria-label*="Pagination" i]',
-      'nav[aria-label*="分页" i]',
-    ]) {
-      for (const el of document.querySelectorAll(sel)) scopes.push(el);
+  function elementClickable(el) {
+    if (!el || !el.isConnected) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return false;
+    const st = getComputedStyle(el);
+    return st.visibility !== "hidden" && st.display !== "none" && st.opacity !== "0";
+  }
+
+  function findSemrushNextButton() {
+    const byAttr = document.querySelector('[data-ui-name="Pagination.NextPage"]');
+    if (byAttr) {
+      const btn = resolveClickable(byAttr);
+      if (btn) return btn;
     }
-    for (const el of document.querySelectorAll('[class*="pagination" i], [class*="Pagination"]')) {
-      if (el.tagName !== "BUTTON") scopes.push(el);
+    for (const btn of document.querySelectorAll("button[data-ui-name='Pagination.NextPage']")) {
+      if (elementClickable(btn)) return btn;
     }
-    scopes.push(document.body);
-    return scopes;
+    const navs = [...document.querySelectorAll("nav")].filter(elementClickable);
+    for (const nav of navs) {
+      const aria = norm(nav.getAttribute("aria-label"));
+      if (aria && !/pag|分页/i.test(aria) && navs.length > 3) continue;
+      for (const btn of nav.querySelectorAll("button")) {
+        if (!elementClickable(btn)) continue;
+        if (btn.getAttribute("data-ui-name") === "Pagination.NextPage") return btn;
+        const text = norm(btn.textContent);
+        if (/^(next|下一页)$/i.test(text)) return btn;
+      }
+    }
+    return null;
+  }
+
+  function getPageNumberInput() {
+    const selectors = [
+      '[data-ui-name="Pagination.PageInput.Value"] input',
+      '[data-ui-name="Pagination.PageInput"] input',
+      'nav input[inputmode="numeric"]',
+      'nav input[type="text"]',
+    ];
+    for (const sel of selectors) {
+      const input = document.querySelector(sel);
+      if (input && elementClickable(input)) return input;
+    }
+    return null;
+  }
+
+  function readCurrentPage(input) {
+    const v = input?.value ?? input?.getAttribute("value") ?? "";
+    const n = parseInt(String(v).replace(/[^\d]/g, ""), 10);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  }
+
+  function findPrimaryScroller() {
+    let best = null;
+    let bestGap = 0;
+    for (const el of document.querySelectorAll("*")) {
+      if (!(el instanceof HTMLElement)) continue;
+      const gap = el.scrollHeight - el.clientHeight;
+      if (gap < 200) continue;
+      const st = getComputedStyle(el);
+      const scrollable = /(auto|scroll)/.test(st.overflowY + st.overflow);
+      if (!scrollable) continue;
+      if (gap > bestGap) {
+        bestGap = gap;
+        best = el;
+      }
+    }
+    return best;
   }
 
   function scrollableRoots() {
     const roots = new Set([document.documentElement, document.body, document.scrollingElement].filter(Boolean));
-    for (const sel of [
-      "main",
-      '[data-ui-name="DataTable"]',
-      '[class*="scroll" i]',
-      '[class*="table" i]',
-      '[role="table"]',
-    ]) {
-      for (const el of document.querySelectorAll(sel)) {
-        if (el.scrollHeight > el.clientHeight + 80) roots.add(el);
-      }
+    const primary = findPrimaryScroller();
+    if (primary) roots.add(primary);
+    for (const el of document.querySelectorAll('[data-ui-name="DataTable"], main, [class*="scroll" i]')) {
+      if (el.scrollHeight > el.clientHeight + 80) roots.add(el);
     }
     return [...roots];
   }
 
   function scrollAllToBottom() {
-    window.scrollTo({ top: Math.max(document.body.scrollHeight, document.documentElement.scrollHeight), behavior: "instant" });
     for (const root of scrollableRoots()) {
-      try {
-        root.scrollTop = root.scrollHeight;
-      } catch { /* */ }
+      try { root.scrollTop = root.scrollHeight; } catch { /* */ }
     }
+    window.scrollTo(0, Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
   }
 
   function scrollAllToTop() {
-    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    window.scrollTo(0, 0);
     for (const root of scrollableRoots()) {
-      try {
-        root.scrollTop = 0;
-      } catch { /* */ }
+      try { root.scrollTop = 0; } catch { /* */ }
     }
   }
 
-  function findNextButton() {
-    for (const scope of paginationScopes()) {
-      for (const el of scope.querySelectorAll("button, a[role='button'], [role='button']")) {
-        if (isNextCandidate(el)) return resolveClickable(el);
-      }
+  async function revealPaginationControls(log) {
+    const primary = findPrimaryScroller();
+    if (primary) {
+      log(`主滚动容器: <${primary.tagName.toLowerCase()}> Δ${primary.scrollHeight - primary.clientHeight}px`);
+    } else {
+      log("未检测到内部滚动容器，使用 window 滚动");
     }
-    return null;
-  }
-
-  async function revealAndFindNext(log) {
-    log("滚动到列表底部以定位 Next…");
-    for (let pass = 0; pass < 15; pass++) {
+    for (let step = 0; step < 20; step++) {
       scrollAllToBottom();
-      await sleep(350);
-      const btn = findNextButton();
-      if (btn) {
-        try {
-          btn.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
-        } catch { /* */ }
-        await sleep(200);
-        log(`已找到 Next（第 ${pass + 1} 次滚动）`);
-        return btn;
-      }
+      await sleep(200);
+      if (findSemrushNextButton() || getPageNumberInput()) return true;
     }
-    log("滚到底部后仍未找到 Next。");
+    return Boolean(findSemrushNextButton() || getPageNumberInput());
+  }
+
+  async function goNextViaPageInput(log) {
+    const input = getPageNumberInput();
+    if (!input || isDisabled(input)) return false;
+    const cur = readCurrentPage(input);
+    const next = cur + 1;
+    input.focus();
+    input.value = String(next);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keypress", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+    const addon = input.closest('[data-ui-name*="PageInput"]')?.querySelector("button, [role='button']");
+    if (addon && !isDisabled(addon)) fireClick(addon);
+    log(`已用页码框翻页 ${cur} → ${next}（无需点底部 Next）`);
+    return true;
+  }
+
+  async function goNextViaButton(log) {
+    let btn = findSemrushNextButton();
+    if (!btn) await revealPaginationControls(log);
+    btn = findSemrushNextButton();
+    if (!btn) return false;
+    if (isDisabled(btn)) return false;
+    try {
+      btn.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+    } catch { /* */ }
+    await sleep(250);
+    fireClick(btn);
+    log("已点击 Pagination.NextPage");
+    return true;
+  }
+
+  async function goToNextPage(log) {
+    if (await goNextViaPageInput(log)) return "input";
+    if (await goNextViaButton(log)) return "button";
+    log("翻页失败：无页码框也无 Pagination.NextPage");
     return null;
+  }
+
+  function diagnosePagination(log) {
+    const next = findSemrushNextButton();
+    const input = getPageNumberInput();
+    log(`诊断: Next按钮=${next ? "有" : "无"} 页码框=${input ? "有(当前" + readCurrentPage(input) + ")" : "无"}`);
+    log(`诊断: data-ui-name Pagination.NextPage 数量=${document.querySelectorAll('[data-ui-name="Pagination.NextPage"]').length}`);
   }
 
   function isDisabled(el) {
     if (!el) return true;
     if (el.disabled || el.getAttribute("aria-disabled") === "true") return true;
     const cls = (el.className || "").toString().toLowerCase();
-    if (cls.includes("disabled")) return true;
+    if (cls.includes("disabled") || cls.includes("_disabled")) return true;
+    try {
+      if (getComputedStyle(el).pointerEvents === "none") return true;
+    } catch { /* */ }
     return false;
   }
 
@@ -296,6 +365,7 @@
       return;
     }
 
+    diagnosePagination(ui.log);
     ui.log(`开始自动导出（最多 ${prefs.maxPages} 页）`);
 
     while (!stopRequested && pageIndex <= prefs.maxPages) {
@@ -309,35 +379,40 @@
       }
       await sleep(prefs.delayAfterExportMs);
 
-      const nextBtn = await revealAndFindNext(ui.log);
-      if (!nextBtn) {
-        ui.log("无法定位 Next。请暂时加大「翻页后等待」或 Issue 反馈分页文案。");
-        break;
-      }
-      if (isDisabled(nextBtn)) {
-        ui.log("Next 为禁用状态，已到最后一页，结束。");
+      const nextBtn = findSemrushNextButton();
+      if (nextBtn && isDisabled(nextBtn)) {
+        ui.log("Next 已禁用，已到最后一页，结束。");
         break;
       }
 
       const fp = tableFingerprint();
-      scrollAllToBottom();
-      await sleep(200);
-      try {
-        nextBtn.scrollIntoView({ block: "center", behavior: "instant" });
-      } catch { /* */ }
-      await sleep(200);
-      fireClick(nextBtn);
-      ui.log("已点击 Next，等待列表刷新…");
+      const inputBefore = getPageNumberInput();
+      const pageBefore = inputBefore ? readCurrentPage(inputBefore) : pageIndex;
+
+      const method = await goToNextPage(ui.log);
+      if (!method) {
+        diagnosePagination(ui.log);
+        break;
+      }
+
       scrollAllToTop();
       await sleep(400);
-      const changed = await waitForChange(fp, Math.max(prefs.delayAfterNextMs, 2000));
+      const waitMs = Math.max(prefs.delayAfterNextMs, 3000);
+      let changed = await waitForChange(fp, waitMs);
+      if (!changed && inputBefore) {
+        const inputAfter = getPageNumberInput();
+        if (inputAfter && readCurrentPage(inputAfter) > pageBefore) changed = true;
+      }
       if (!changed) {
         await sleep(prefs.delayAfterNextMs);
         const fp2 = tableFingerprint();
-        if (fp2 === fp) {
-          ui.log("列表内容未变化，可能已是最后一页或加载超时，结束。");
-          break;
-        }
+        const inputAfter = getPageNumberInput();
+        if (fp2 !== fp) changed = true;
+        if (inputAfter && readCurrentPage(inputAfter) > pageBefore) changed = true;
+      }
+      if (!changed) {
+        ui.log(`翻页后 ${waitMs}ms 内列表/页码未变，结束或加大「翻页后等待」`);
+        break;
       }
       pageIndex += 1;
     }

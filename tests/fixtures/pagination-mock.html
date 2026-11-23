@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Semrush pagination mock</title>
+  <style>
+    #scroller { height: 400px; overflow-y: auto; border: 1px solid #ccc; }
+    .row { height: 40px; border-bottom: 1px solid #eee; }
+    nav { padding: 12px; }
+  </style>
+</head>
+<body>
+  <div id="scroller">
+    <div id="rows"></div>
+    <nav aria-label="pagination">
+      <button type="button" data-ui-name="Pagination.PrevPage">Previous</button>
+      <span data-ui-name="Pagination.PageInput"><input id="page" value="1" /></span>
+      <button type="button" data-ui-name="Pagination.NextPage">Next</button>
+    </nav>
+  </div>
+  <script>
+    const rows = document.getElementById("rows");
+    const pageInput = document.getElementById("page");
+    let page = 1;
+    function render() {
+      rows.innerHTML = "";
+      for (let i = 0; i < 80; i++) {
+        const d = document.createElement("div");
+        d.className = "row";
+        d.dataset.testid = "row";
+        d.textContent = "Page " + page + " row " + i;
+        rows.appendChild(d);
+      }
+      pageInput.value = String(page);
+    }
+    document.querySelector('[data-ui-name="Pagination.NextPage"]').addEventListener("click", () => { page += 1; render(); });
+    pageInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { page = Math.max(1, parseInt(pageInput.value, 10) || 1); render(); } });
+    render();
+  </script>
+</body>
+</html>

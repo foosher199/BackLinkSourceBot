@@ -1,0 +1,27 @@
+{
+  "name": "backlinksourcebot",
+  "version": "1.0.0",
+  "description": "在 **Semrush** / **3ue 镜像站**（如 `sem.3ue.co`）的 **Backlinks 反向链接列表**页，自动模拟点击 **「导出当前页」** 与 **Next**，适合普通会员无法整表批量导出的场景。",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/foosher199/BackLinkSourceBot.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/foosher199/BackLinkSourceBot/issues"
+  },
+  "homepage": "https://github.com/foosher199/BackLinkSourceBot#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.49.1"
+  }
+}
