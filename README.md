@@ -11,7 +11,12 @@
 - 可配置导出间隔、翻页等待、最大页数
 - 右下角浮窗：开始 / 停止、运行日志
 
-## 安装（Tampermonkey）
+
+## 推荐：Chrome 扩展（v2.0）
+
+3ue 镜像请 **不要用油猴**，改用语雀同目录 [`extension/`](extension/README.md) 未打包扩展。详见 [extension/README.md](extension/README.md)。
+
+## 安装（Tampermonkey · 已不推荐 3ue）
 
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/)。
 2. 任选一种方式添加脚本：
