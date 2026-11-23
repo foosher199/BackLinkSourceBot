@@ -123,24 +123,25 @@ async function startLoop(tabId, prefs) {
       break;
     }
     broadcast(tabId, `已翻页 (${nav.method})`);
-    await sleep(delayNext);
 
-    let changed = false;
-    for (let w = 0; w < 12; w++) {
-      await sleep(Math.max(400, Math.floor(delayNext / 12)));
-      const chk = await exec(tabId, frameId, (prev) => {
-        const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
-        const row = document.querySelector('[data-ui-name="DataTable.Row"]') || document.querySelector("table tbody tr");
-        if (!row) return { changed: false };
-        const a = row.querySelector('a[href^="http"]');
-        const sig = a ? a.href : norm(row.textContent).slice(0, 100);
-        return { changed: !!(sig && sig !== prev) };
-      }, [nav.signature || ""]);
-      if (chk?.changed) { changed = true; break; }
+    const waitMs = Math.max(delayNext, 4000);
+    let readyForNextExport = false;
+    for (let w = 0; w < 24; w++) {
+      await sleep(Math.max(350, Math.floor(waitMs / 24)));
+      const pg = await exec(tabId, frameId, readPageNumber, [nav.expectedPage, nav.signature || ""]);
+      if (pg?.ready) {
+        readyForNextExport = true;
+        broadcast(tabId, `页码 ${pg.page}，继续导出当前页`);
+        break;
+      }
+      if (pg?.changedRow) {
+        readyForNextExport = true;
+        broadcast(tabId, "列表已刷新，继续导出当前页");
+        break;
+      }
     }
-    if (!changed) {
-      broadcast(tabId, "翻页后数据未变化，停止或加大「翻页后等待」");
-      break;
+    if (!readyForNextExport) {
+      broadcast(tabId, "翻页可能仍在加载，仍将尝试下一页导出");
     }
   }
 
@@ -148,8 +149,37 @@ async function startLoop(tabId, prefs) {
   broadcast(tabId, "已结束", { status: "idle" });
 }
 
+
+function readPageNumber(expectedPage, prevSig) {
+  const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+  const input =
+    document.querySelector('[data-ui-name="Pagination.PageInput.Value"] input') ||
+    document.querySelector('[data-ui-name="Pagination.PageInput"] input');
+  const page = input ? parseInt(String(input.value).replace(/\D/g, ""), 10) : null;
+  const row =
+    document.querySelector('[data-ui-name="DataTable.Row"]') ||
+    document.querySelector("table tbody tr");
+  let changedRow = false;
+  if (row && prevSig) {
+    const a = row.querySelector('a[href^="http"]');
+    const sig = a ? a.href : norm(row.textContent).slice(0, 100);
+    changedRow = !!(sig && sig !== prevSig);
+  }
+  const ready = Number.isFinite(expectedPage) && Number.isFinite(page) && page >= expectedPage;
+  return { page: Number.isFinite(page) ? page : null, ready, changedRow };
+}
+
 /** 在目标 frame 的 MAIN 世界执行：寻找并点击导出 */
 function doExportPage(format) {
+  try {
+    window.scrollTo(0, 0);
+    document.querySelectorAll('*').forEach((el) => {
+      if (el.scrollTop > 0 && el.scrollHeight > el.clientHeight + 80) {
+        const st = getComputedStyle(el);
+        if (/(auto|scroll)/.test(st.overflowY + st.overflow)) el.scrollTop = 0;
+      }
+    });
+  } catch { /* */ }
   const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
   function visible(el) {
     if (!el) return false;
@@ -265,7 +295,7 @@ function doNextPage() {
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
     input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }));
-    return { ok: true, method: "页码+Enter", signature: sig, last: false };
+    return { ok: true, method: "页码+Enter", signature: sig, last: false, expectedPage: cur + 1 };
   }
 
   let next =

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BackLinkSourceBot · 外链翻页导出",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Semrush / 3ue 反向链接：每页导出 + 翻页，自动选中含表格的 iframe",
   "permissions": [
     "scripting",
