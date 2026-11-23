@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         SEMrush 反向链接 · 自动翻页导出当前页
 // @namespace    https://fontchanger.art/
-// @version      1.0.1
+// @version      1.0.2
 // @description  在已登录的 Semrush / 3ue 镜像反向链接列表页，自动「导出当前页」后点「Next」，直至最后一页
 // @author       foosher199
 // @updateURL    https://raw.githubusercontent.com/foosher199/BackLinkSourceBot/main/userscript/semrush-backlink-pager-export.user.js
 // @downloadURL  https://raw.githubusercontent.com/foosher199/BackLinkSourceBot/main/userscript/semrush-backlink-pager-export.user.js
 // @match        *://*.3ue.co/analytics/backlinks/backlinks*
 // @match        *://*.semrush.com/analytics/backlinks/backlinks*
+// @match        *://sem.3ue.co/*
+// @include      *://sem.3ue.co/analytics/backlinks/backlinks*
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
@@ -373,7 +375,7 @@
       minBtn.textContent = hidden ? "−" : "+";
     });
 
-    ui.log("面板已加载。登录后从当前页开始即可。");
+    ui.log("面板已加载。确认在反向链接列表页，点紫色「开始」。");
     return ui;
   }
 
@@ -399,9 +401,29 @@
     });
   }
 
+  function hasBacklinkTableUi() {
+    return !!(
+      findExportTrigger() ||
+      document.querySelector('[data-ui-name="DataTable.Row"], table tbody tr')
+    );
+  }
+
+  function shouldAttachHere() {
+    if (!isBacklinksRoute()) return false;
+    try {
+      const inIframe = window.self !== window.top;
+      if (inIframe) return true;
+      if (document.querySelector("iframe") && !hasBacklinkTableUi()) return false;
+    } catch {
+      /* cross-origin top */
+      return true;
+    }
+    return true;
+  }
+
   function tryInit() {
     if (document.getElementById("semrush-bl-export-panel")) return;
-    if (!isBacklinksRoute()) return;
+    if (!shouldAttachHere()) return;
     buildPanel();
   }
 
