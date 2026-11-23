@@ -204,13 +204,15 @@ function doExportPage(format) {
   click(trigger);
 
   const want = format === "csv" ? "csv" : "xls";
-  const deadline = Date.now() + 8000;
+  // 3ue 上「导出当前页面」常为直接下载，无 Excel/CSV 二级菜单
+  const menuDeadline = Date.now() + 2000;
   let menu = null;
-  while (Date.now() < deadline) {
+  while (Date.now() < menuDeadline) {
     menu =
       document.querySelector(`[data-ui-name="DropdownMenu.Item"][value="${want}"]`) ||
       document.querySelector(`[data-test-export-type="${want}"]`);
     if (menu && visible(menu)) break;
+    menu = null;
     for (const el of document.querySelectorAll('[role="menuitem"], [data-ui-name="DropdownMenu.Item"]')) {
       const tx = norm(el.textContent);
       if ((want === "xls" && /excel/i.test(tx)) || (want === "csv" && /csv/i.test(tx))) {
@@ -220,9 +222,11 @@ function doExportPage(format) {
     }
     if (menu) break;
   }
-  if (!menu) return { ok: false, reason: "导出菜单未出现或无 Excel/CSV 项" };
-  click(menu);
-  return { ok: true, method: want === "xls" ? "Excel" : "CSV" };
+  if (menu) {
+    click(menu);
+    return { ok: true, method: want === "xls" ? "Excel" : "CSV" };
+  }
+  return { ok: true, method: "直接下载（无格式菜单）", directDownload: true };
 }
 
 function doNextPage() {

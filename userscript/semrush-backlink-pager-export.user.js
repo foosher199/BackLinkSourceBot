@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEMrush 反向链接 · 自动翻页导出当前页
 // @namespace    https://fontchanger.art/
-// @version      1.2.1
+// @version      1.2.2
 // @description  在已登录的 Semrush / 3ue 镜像反向链接列表页，自动「导出当前页」后点「Next」，直至最后一页
 // @author       foosher199
 // @updateURL    https://raw.githubusercontent.com/foosher199/BackLinkSourceBot/main/userscript/semrush-backlink-pager-export.user.js
@@ -410,13 +410,13 @@
       return false;
     }
     fireClick(trigger);
-    const menuItem = await waitForMenuItem(format, 8000);
-    if (!menuItem) {
-      log("导出菜单未出现或未找到 CSV/Excel 选项。");
-      return false;
+    const menuItem = await waitForMenuItem(format, 2000);
+    if (menuItem) {
+      fireClick(menuItem);
+      log(`已触发导出（${format === "csv" ? "CSV" : "Excel"}）`);
+    } else {
+      log("已点击「导出当前页面」（直接下载，无格式菜单）");
     }
-    fireClick(menuItem);
-    log(`已触发导出（${format === "csv" ? "CSV" : "Excel"}）`);
     return true;
   }
 
