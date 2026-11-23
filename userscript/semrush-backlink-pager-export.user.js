@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEMrush 反向链接 · 自动翻页导出当前页
 // @namespace    https://fontchanger.art/
-// @version      1.0.0
+// @version      1.0.1
 // @description  在已登录的 Semrush / 3ue 镜像反向链接列表页，自动「导出当前页」后点「Next」，直至最后一页
 // @author       foosher199
 // @updateURL    https://raw.githubusercontent.com/foosher199/BackLinkSourceBot/main/userscript/semrush-backlink-pager-export.user.js
@@ -210,6 +210,15 @@
     stopRequested = false;
     pageIndex = 1;
     ui.setStatus("运行中…", "run");
+    ui.log("正在等待「导出」和 Next 按钮出现（最多 60 秒）…");
+    const ready = await waitForReady(60000);
+    if (!ready) {
+      ui.log("仍未找到导出或 Next。请确认：① 在反向链接列表 Tab；② 表格已加载；③ 滚到能看到分页。");
+      ui.setStatus("就绪", "idle");
+      running = false;
+      return;
+    }
+
     ui.log(`开始自动导出（最多 ${prefs.maxPages} 页）`);
 
     while (!stopRequested && pageIndex <= prefs.maxPages) {
@@ -309,7 +318,7 @@
           <button type="button" class="start" data-start>开始</button>
           <button type="button" class="stop" data-stop>停止</button>
         </div>
-        <p class="hint">请先在 Chrome 允许该站「自动下载多个文件」。保持本标签页在前台效果更佳。</p>
+        <p class="hint">本面板即开始按钮；不在 Semrush 页上。先允许「自动下载多个文件」，登录后打开反向链接列表再点紫色「开始」。</p>
         <div class="log" data-log></div>
       </div>
     `;
@@ -368,14 +377,31 @@
     return ui;
   }
 
-  function shouldAttachPanel() {
-    if (!/\/analytics\/backlinks\/backlinks/i.test(location.pathname + location.search)) return false;
-    return !!(findExportTrigger() || document.querySelector('[data-ui-name="DataTable.Row"], table tbody tr'));
+  function isBacklinksRoute() {
+    return /\/analytics\/backlinks\/backlinks/i.test(location.pathname + location.search + location.hash);
+  }
+
+  function waitForReady(timeoutMs) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const tick = () => {
+        if (findExportTrigger() && findNextButton()) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() - start >= timeoutMs) {
+          resolve(false);
+          return;
+        }
+        setTimeout(tick, 500);
+      };
+      tick();
+    });
   }
 
   function tryInit() {
     if (document.getElementById("semrush-bl-export-panel")) return;
-    if (!shouldAttachPanel()) return;
+    if (!isBacklinksRoute()) return;
     buildPanel();
   }
 
