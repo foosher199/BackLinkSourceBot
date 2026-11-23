@@ -188,12 +188,13 @@ function doExportPage(format) {
     const st = getComputedStyle(el);
     return st.display !== "none" && st.visibility !== "hidden";
   }
-  function click(el) {
+  function clickOnce(el) {
     if (!el) return;
-    ["mousedown", "mouseup", "click"].forEach((t) =>
-      el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true }))
-    );
-    el.click?.();
+    if (typeof el.click === "function") {
+      el.click();
+      return;
+    }
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   }
 
   const CURRENT_PAGE_ONLY = [
@@ -231,7 +232,7 @@ function doExportPage(format) {
   }
   if (!trigger) return { ok: false, reason: "未找到「导出当前页面」（已忽略「导出」）" };
 
-  click(trigger);
+  clickOnce(trigger);
 
   const want = format === "csv" ? "csv" : "xls";
   // 3ue 上「导出当前页面」常为直接下载，无 Excel/CSV 二级菜单
@@ -253,7 +254,7 @@ function doExportPage(format) {
     if (menu) break;
   }
   if (menu) {
-    click(menu);
+    clickOnce(menu);
     return { ok: true, method: want === "xls" ? "Excel" : "CSV" };
   }
   return { ok: true, method: "直接下载（无格式菜单）", directDownload: true };
@@ -261,13 +262,14 @@ function doExportPage(format) {
 
 function doNextPage() {
   const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
-  function click(el) {
+  function clickOnce(el) {
     if (!el) return;
     el.scrollIntoView?.({ block: "center" });
-    ["mousedown", "mouseup", "click"].forEach((t) =>
-      el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true }))
-    );
-    el.click?.();
+    if (typeof el.click === "function") {
+      el.click();
+      return;
+    }
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   }
   function tableSig() {
     const row =
@@ -303,18 +305,18 @@ function doNextPage() {
     document.querySelector('[data-ui-name="Pagination.NextPage"] button') ||
     document.querySelector('[data-ui-name="Pagination.NextPage"]');
   if (next && !disabled(next)) {
-    click(next);
+    clickOnce(next);
     return { ok: true, method: "Pagination.NextPage", signature: sig, last: false };
   }
   for (const btn of document.querySelectorAll("nav button")) {
     if (disabled(btn)) continue;
     if (btn.getAttribute("data-ui-name") === "Pagination.NextPage") {
-      click(btn);
+      clickOnce(btn);
       return { ok: true, method: "Next", signature: sig, last: false };
     }
     const t = norm(btn.textContent);
     if (t === "Next" || t === "下一页") {
-      click(btn);
+      clickOnce(btn);
       return { ok: true, method: t, signature: sig, last: false };
     }
   }
