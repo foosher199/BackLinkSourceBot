@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEMrush 反向链接 · 自动翻页导出当前页
 // @namespace    https://fontchanger.art/
-// @version      1.1.0
+// @version      1.1.1
 // @description  在已登录的 Semrush / 3ue 镜像反向链接列表页，自动「导出当前页」后点「Next」，直至最后一页
 // @author       foosher199
 // @updateURL    https://raw.githubusercontent.com/foosher199/BackLinkSourceBot/main/userscript/semrush-backlink-pager-export.user.js
@@ -429,7 +429,7 @@
     root.innerHTML = `
       <style>
         #semrush-bl-export-panel {
-          position: fixed; right: 16px; bottom: 16px; z-index: 2147483646;
+          position: fixed; right: 16px; bottom: 16px; z-index: 2147483647;
           width: 300px; font: 13px/1.4 system-ui, sans-serif;
           background: #1a1d26; color: #e8eaed; border-radius: 12px;
           box-shadow: 0 8px 32px rgba(0,0,0,.45); border: 1px solid #3d4450;
@@ -544,7 +544,9 @@
   }
 
   function isBacklinksRoute() {
-    return /\/analytics\/backlinks\/backlinks/i.test(location.pathname + location.search + location.hash);
+    const loc = location.pathname + location.search + location.hash + location.href;
+    return /\/analytics\/backlinks\/backlinks/i.test(loc)
+      || (/\/analytics\/backlinks/i.test(loc) && /searchType=/i.test(loc));
   }
 
   function waitForReady(timeoutMs) {
@@ -574,24 +576,35 @@
 
   function shouldAttachHere() {
     if (!isBacklinksRoute()) return false;
+    if (hasBacklinkTableUi()) return true;
     try {
-      const inIframe = window.self !== window.top;
-      if (inIframe) return true;
-      if (document.querySelector("iframe") && !hasBacklinkTableUi()) return false;
+      if (window.self === window.top) return true;
     } catch {
-      /* cross-origin top */
       return true;
     }
-    return true;
+    return false;
   }
 
   function tryInit() {
-    if (document.getElementById("semrush-bl-export-panel")) return;
-    if (!shouldAttachHere()) return;
-    buildPanel();
+    try {
+      if (document.getElementById("semrush-bl-export-panel")) return;
+      if (!shouldAttachHere()) return;
+      buildPanel();
+      const frame = window.self === window.top ? "top" : "iframe";
+      console.info("[BackLinkSourceBot] 面板已注入 @" + frame + " " + location.pathname);
+    } catch (err) {
+      console.error("[BackLinkSourceBot] 初始化失败", err);
+    }
   }
 
   tryInit();
   const mo = new MutationObserver(() => tryInit());
   mo.observe(document.documentElement, { childList: true, subtree: true });
+  let attachAttempts = 0;
+  const attachTimer = setInterval(() => {
+    tryInit();
+    if (document.getElementById("semrush-bl-export-panel") || ++attachAttempts >= 20) {
+      clearInterval(attachTimer);
+    }
+  }, 1500);
 })();
