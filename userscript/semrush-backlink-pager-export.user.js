@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEMrush 反向链接 · 自动翻页导出当前页
 // @namespace    https://fontchanger.art/
-// @version      1.1.1
+// @version      1.2.0
 // @description  在已登录的 Semrush / 3ue 镜像反向链接列表页，自动「导出当前页」后点「Next」，直至最后一页
 // @author       foosher199
 // @updateURL    https://raw.githubusercontent.com/foosher199/BackLinkSourceBot/main/userscript/semrush-backlink-pager-export.user.js
@@ -18,6 +18,56 @@
   "use strict";
 
   const STORAGE_KEY = "semrushBlExportPrefs";
+  let activeDoc = document;
+  let activeWin = window;
+
+  function enumerateFrames() {
+    const frames = [{ doc: document, win: window, label: "top" }];
+    for (const iframe of document.querySelectorAll("iframe")) {
+      try {
+        const doc = iframe.contentDocument;
+        const win = iframe.contentWindow;
+        if (doc && win) frames.push({ doc, win, label: "iframe" });
+      } catch { /* cross-origin */ }
+    }
+    return frames;
+  }
+
+  function scoreFrame(doc) {
+    if (!doc || !doc.body) return 0;
+    let score = 0;
+    if (doc.querySelector('[data-ui-name="DataTable.Row"], table tbody tr, [role="row"] [role="cell"]')) score += 80;
+    if (doc.querySelector('[data-ui-name="Pagination.NextPage"], [data-ui-name="Pagination.PageInput"]')) score += 40;
+    for (const el of doc.querySelectorAll('[data-ui-name="Button.Text"], button')) {
+      const tx = norm(el.textContent);
+      if (/导出|export/i.test(tx)) { score += 120; break; }
+    }
+  return score;
+  }
+
+  function pickAutomationFrame(log) {
+    let best = { doc: document, win: window, label: "top", score: scoreFrame(document) };
+    for (const f of enumerateFrames()) {
+      const s = scoreFrame(f.doc);
+      if (s > best.score) best = { doc: f.doc, win: f.win, label: f.label, score: s };
+    }
+    activeDoc = best.doc;
+    activeWin = best.win;
+    if (log) {
+      log(`目标文档: ${best.label} 帧 score=${best.score} (${best.doc.location?.href || location.href})`);
+    }
+    return best.score > 0;
+  }
+
+  function logFrameScores(log) {
+    for (const f of enumerateFrames()) {
+      const s = scoreFrame(f.doc);
+      let href = "";
+      try { href = f.doc.location?.href || ""; } catch { href = "(blocked)"; }
+      log(`  · ${f.label} score=${s} ${href}`);
+    }
+  }
+
 
   const DEFAULTS = {
     format: "xls", // xls | csv
@@ -71,21 +121,36 @@
   ];
 
   function findExportTrigger() {
+    const doc = activeDoc;
+    for (const sel of [
+      '[data-test="export"]',
+      '[data-test="export-button"]',
+      'button[aria-label*="导出"]',
+      'button[aria-label*="Export" i]',
+    ]) {
+      const el = doc.querySelector(sel);
+      if (el && isVisible(el)) return el.closest("button") || el;
+    }
     for (const label of EXPORT_LABELS) {
-      for (const el of document.querySelectorAll('[data-ui-name="Button.Text"], button, [role="button"]')) {
+      for (const el of doc.querySelectorAll('[data-ui-name="Button.Text"], button, [role="button"]')) {
         if (!isVisible(el)) continue;
         const text = norm(el.textContent);
-        if (text === label || text.startsWith(label)) {
+        if (text === label || text.startsWith(label) || (label.length >= 2 && text.includes(label))) {
           return el.closest("button") || el;
         }
       }
+    }
+    for (const el of doc.querySelectorAll('button, [role="button"]')) {
+      if (!isVisible(el)) continue;
+      const text = norm(el.textContent);
+      if (/^导出/.test(text) || /^export$/i.test(text)) return el.closest("button") || el;
     }
     return null;
   }
 
   function findExportMenuItem(format) {
     const want = format === "csv" ? "csv" : "xls";
-    const byAttr = document.querySelector(
+    const byAttr = activeDoc.querySelector(
       `[data-ui-name="DropdownMenu.Item"][value="${want}"], [data-test-export-type="${want}"]`
     );
     if (byAttr && isVisible(byAttr)) return byAttr;
@@ -95,7 +160,7 @@
       : ["Excel", "XLS", "XLSX", ".xlsx"];
 
     for (const sel of ['[role="menuitem"]', '[data-ui-name="DropdownMenu.Item"]', 'a', 'button']) {
-      for (const el of document.querySelectorAll(sel)) {
+      for (const el of activeDoc.querySelectorAll(sel)) {
         if (!isVisible(el)) continue;
         const t = norm(el.textContent);
         if (labels.some((l) => t === l || t.includes(l))) return el;
@@ -120,15 +185,15 @@
   }
 
   function findSemrushNextButton() {
-    const byAttr = document.querySelector('[data-ui-name="Pagination.NextPage"]');
+    const byAttr = activeDoc.querySelector('[data-ui-name="Pagination.NextPage"]');
     if (byAttr) {
       const btn = resolveClickable(byAttr);
       if (btn) return btn;
     }
-    for (const btn of document.querySelectorAll("button[data-ui-name='Pagination.NextPage']")) {
+    for (const btn of activeDoc.querySelectorAll("button[data-ui-name='Pagination.NextPage']")) {
       if (elementClickable(btn)) return btn;
     }
-    const navs = [...document.querySelectorAll("nav")].filter(elementClickable);
+    const navs = [...activeDoc.querySelectorAll("nav")].filter(elementClickable);
     for (const nav of navs) {
       const aria = norm(nav.getAttribute("aria-label"));
       if (aria && !/pag|分页/i.test(aria) && navs.length > 3) continue;
@@ -150,7 +215,7 @@
       'nav input[type="text"]',
     ];
     for (const sel of selectors) {
-      const input = document.querySelector(sel);
+      const input = activeDoc.querySelector(sel);
       if (input && elementClickable(input)) return input;
     }
     return null;
@@ -165,7 +230,7 @@
   function findPrimaryScroller() {
     let best = null;
     let bestGap = 0;
-    for (const el of document.querySelectorAll("*")) {
+    for (const el of activeDoc.querySelectorAll("*")) {
       if (!(el instanceof HTMLElement)) continue;
       const gap = el.scrollHeight - el.clientHeight;
       if (gap < 200) continue;
@@ -184,7 +249,7 @@
     const roots = new Set([document.documentElement, document.body, document.scrollingElement].filter(Boolean));
     const primary = findPrimaryScroller();
     if (primary) roots.add(primary);
-    for (const el of document.querySelectorAll('[data-ui-name="DataTable"], main, [class*="scroll" i]')) {
+    for (const el of activeDoc.querySelectorAll('[data-ui-name="DataTable"], main, [class*="scroll" i]')) {
       if (el.scrollHeight > el.clientHeight + 80) roots.add(el);
     }
     return [...roots];
@@ -194,11 +259,11 @@
     for (const root of scrollableRoots()) {
       try { root.scrollTop = root.scrollHeight; } catch { /* */ }
     }
-    window.scrollTo(0, Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
+    try { activeWin.scrollTo(0, Math.max(activeDoc.body.scrollHeight, activeDoc.documentElement.scrollHeight)); } catch { /* */ }
   }
 
   function scrollAllToTop() {
-    window.scrollTo(0, 0);
+    try { activeWin.scrollTo(0, 0); } catch { /* */ }
     for (const root of scrollableRoots()) {
       try { root.scrollTop = 0; } catch { /* */ }
     }
@@ -263,7 +328,7 @@
     const next = findSemrushNextButton();
     const input = getPageNumberInput();
     log(`诊断: Next按钮=${next ? "有" : "无"} 页码框=${input ? "有(当前" + readCurrentPage(input) + ")" : "无"}`);
-    log(`诊断: data-ui-name Pagination.NextPage 数量=${document.querySelectorAll('[data-ui-name="Pagination.NextPage"]').length}`);
+    log(`诊断: data-ui-name Pagination.NextPage 数量=${activeDoc.querySelectorAll('[data-ui-name="Pagination.NextPage"]').length}`);
   }
 
   function isDisabled(el) {
@@ -280,9 +345,9 @@
   /** 用表格第一行锚点 URL 判断翻页是否完成 */
   function tableFingerprint() {
     const row =
-      document.querySelector('[data-ui-name="DataTable.Row"]') ||
-      document.querySelector("table tbody tr") ||
-      document.querySelector('[role="row"]');
+      activeDoc.querySelector('[data-ui-name="DataTable.Row"]') ||
+      activeDoc.querySelector("table tbody tr") ||
+      activeDoc.querySelector('[role="row"]');
     if (!row) return String(document.body?.innerText?.length || 0);
     const link = row.querySelector('a[href^="http"]');
     return link ? link.href : norm(row.textContent).slice(0, 120);
@@ -357,9 +422,11 @@
     pageIndex = 1;
     ui.setStatus("运行中…", "run");
     ui.log("正在等待「导出」按钮出现（最多 60 秒）…");
-    const ready = await waitForReady(60000);
+    pickAutomationFrame(ui.log);
+    const ready = await waitForReady(60000, ui.log);
     if (!ready) {
-      ui.log("仍未找到导出按钮。请确认在反向链接列表 Tab 且表格已加载。");
+      logFrameScores(ui.log);
+      ui.log("仍未找到导出按钮（若表格在 iframe，请用 v1.2.0+）。确认在 Backlinks 列表 Tab。");
       ui.setStatus("就绪", "idle");
       running = false;
       return;
@@ -369,6 +436,7 @@
     ui.log(`开始自动导出（最多 ${prefs.maxPages} 页）`);
 
     while (!stopRequested && pageIndex <= prefs.maxPages) {
+      pickAutomationFrame(ui.log);
       ui.log(`—— 第 ${pageIndex} 页 ——`);
       scrollAllToTop();
       await sleep(300);
@@ -549,10 +617,11 @@
       || (/\/analytics\/backlinks/i.test(loc) && /searchType=/i.test(loc));
   }
 
-  function waitForReady(timeoutMs) {
+  function waitForReady(timeoutMs, log) {
     return new Promise((resolve) => {
       const start = Date.now();
       const tick = () => {
+        pickAutomationFrame(log);
         if (findExportTrigger()) {
           resolve(true);
           return;
@@ -568,10 +637,17 @@
   }
 
   function hasBacklinkTableUi() {
-    return !!(
-      findExportTrigger() ||
-      document.querySelector('[data-ui-name="DataTable.Row"], table tbody tr')
-    );
+    for (const f of enumerateFrames()) {
+      const prevDoc = activeDoc;
+      const prevWin = activeWin;
+      activeDoc = f.doc;
+      activeWin = f.win;
+      const ok = !!(findExportTrigger() || activeDoc.querySelector('[data-ui-name="DataTable.Row"], table tbody tr'));
+      activeDoc = prevDoc;
+      activeWin = prevWin;
+      if (ok) return true;
+    }
+    return false;
   }
 
   function shouldAttachHere() {
