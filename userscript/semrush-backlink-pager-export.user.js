@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEMrush 反向链接 · 自动翻页导出当前页
 // @namespace    https://fontchanger.art/
-// @version      1.0.2
+// @version      1.0.3
 // @description  在已登录的 Semrush / 3ue 镜像反向链接列表页，自动「导出当前页」后点「Next」，直至最后一页
 // @author       foosher199
 // @updateURL    https://raw.githubusercontent.com/foosher199/BackLinkSourceBot/main/userscript/semrush-backlink-pager-export.user.js
@@ -106,22 +106,97 @@
 
   const NEXT_LABELS = ["Next", "下一页", "下页", "›", "→"];
 
+  function isNextCandidate(el) {
+    if (!el || !isVisible(el)) return false;
+    const aria = norm(el.getAttribute("aria-label"));
+    const text = norm(el.textContent);
+    if (/previous|prev|上一|back/i.test(aria + " " + text)) return false;
+    if (/^next( page)?$/i.test(aria) || /下一页|下页/i.test(aria)) return true;
+    if (NEXT_LABELS.some((l) => text === l || text.toLowerCase() === l.toLowerCase())) return true;
+    if (text.length <= 4 && /next|›|→/i.test(text)) return true;
+    return false;
+  }
+
+  function resolveClickable(el) {
+    return el.closest("button") || el.closest('[role="button"]') || el;
+  }
+
+  function paginationScopes() {
+    const scopes = [];
+    for (const sel of [
+      '[data-ui-name="Pagination"]',
+      '[data-test="pagination"]',
+      'nav[aria-label*="Pagination" i]',
+      'nav[aria-label*="分页" i]',
+    ]) {
+      for (const el of document.querySelectorAll(sel)) scopes.push(el);
+    }
+    for (const el of document.querySelectorAll('[class*="pagination" i], [class*="Pagination"]')) {
+      if (el.tagName !== "BUTTON") scopes.push(el);
+    }
+    scopes.push(document.body);
+    return scopes;
+  }
+
+  function scrollableRoots() {
+    const roots = new Set([document.documentElement, document.body, document.scrollingElement].filter(Boolean));
+    for (const sel of [
+      "main",
+      '[data-ui-name="DataTable"]',
+      '[class*="scroll" i]',
+      '[class*="table" i]',
+      '[role="table"]',
+    ]) {
+      for (const el of document.querySelectorAll(sel)) {
+        if (el.scrollHeight > el.clientHeight + 80) roots.add(el);
+      }
+    }
+    return [...roots];
+  }
+
+  function scrollAllToBottom() {
+    window.scrollTo({ top: Math.max(document.body.scrollHeight, document.documentElement.scrollHeight), behavior: "instant" });
+    for (const root of scrollableRoots()) {
+      try {
+        root.scrollTop = root.scrollHeight;
+      } catch { /* */ }
+    }
+  }
+
+  function scrollAllToTop() {
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    for (const root of scrollableRoots()) {
+      try {
+        root.scrollTop = 0;
+      } catch { /* */ }
+    }
+  }
+
   function findNextButton() {
-    for (const el of document.querySelectorAll(
-      'button, a[role="button"], [role="button"], a'
-    )) {
-      if (!isVisible(el)) continue;
-      const aria = norm(el.getAttribute("aria-label"));
-      const text = norm(el.textContent);
-      if (/^next$/i.test(aria) || /下一页|next/i.test(aria)) return el;
-      if (NEXT_LABELS.some((l) => text === l || text.toLowerCase() === l.toLowerCase())) return el;
+    for (const scope of paginationScopes()) {
+      for (const el of scope.querySelectorAll("button, a[role='button'], [role='button']")) {
+        if (isNextCandidate(el)) return resolveClickable(el);
+      }
     }
-    for (const el of document.querySelectorAll('[data-test*="pagination"], [class*="pagination"] button, nav button')) {
-      if (!isVisible(el)) continue;
-      const text = norm(el.textContent);
-      const aria = norm(el.getAttribute("aria-label"));
-      if (/next|下一/i.test(text + " " + aria)) return el;
+    return null;
+  }
+
+  async function revealAndFindNext(log) {
+    log("滚动到列表底部以定位 Next…");
+    for (let pass = 0; pass < 15; pass++) {
+      scrollAllToBottom();
+      await sleep(350);
+      const btn = findNextButton();
+      if (btn) {
+        try {
+          btn.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+        } catch { /* */ }
+        await sleep(200);
+        log(`已找到 Next（第 ${pass + 1} 次滚动）`);
+        return btn;
+      }
     }
+    log("滚到底部后仍未找到 Next。");
     return null;
   }
 
@@ -212,10 +287,10 @@
     stopRequested = false;
     pageIndex = 1;
     ui.setStatus("运行中…", "run");
-    ui.log("正在等待「导出」和 Next 按钮出现（最多 60 秒）…");
+    ui.log("正在等待「导出」按钮出现（最多 60 秒）…");
     const ready = await waitForReady(60000);
     if (!ready) {
-      ui.log("仍未找到导出或 Next。请确认：① 在反向链接列表 Tab；② 表格已加载；③ 滚到能看到分页。");
+      ui.log("仍未找到导出按钮。请确认在反向链接列表 Tab 且表格已加载。");
       ui.setStatus("就绪", "idle");
       running = false;
       return;
@@ -225,6 +300,8 @@
 
     while (!stopRequested && pageIndex <= prefs.maxPages) {
       ui.log(`—— 第 ${pageIndex} 页 ——`);
+      scrollAllToTop();
+      await sleep(300);
       const ok = await exportCurrentPage(prefs.format, ui.log);
       if (!ok && prefs.stopOnExportFail) {
         ui.log("导出失败，已停止。");
@@ -232,15 +309,27 @@
       }
       await sleep(prefs.delayAfterExportMs);
 
-      const nextBtn = findNextButton();
-      if (!nextBtn || isDisabled(nextBtn)) {
-        ui.log("没有可用的「Next」或已到最后一页，结束。");
+      const nextBtn = await revealAndFindNext(ui.log);
+      if (!nextBtn) {
+        ui.log("无法定位 Next。请暂时加大「翻页后等待」或 Issue 反馈分页文案。");
+        break;
+      }
+      if (isDisabled(nextBtn)) {
+        ui.log("Next 为禁用状态，已到最后一页，结束。");
         break;
       }
 
       const fp = tableFingerprint();
+      scrollAllToBottom();
+      await sleep(200);
+      try {
+        nextBtn.scrollIntoView({ block: "center", behavior: "instant" });
+      } catch { /* */ }
+      await sleep(200);
       fireClick(nextBtn);
       ui.log("已点击 Next，等待列表刷新…");
+      scrollAllToTop();
+      await sleep(400);
       const changed = await waitForChange(fp, Math.max(prefs.delayAfterNextMs, 2000));
       if (!changed) {
         await sleep(prefs.delayAfterNextMs);
@@ -387,7 +476,7 @@
     return new Promise((resolve) => {
       const start = Date.now();
       const tick = () => {
-        if (findExportTrigger() && findNextButton()) {
+        if (findExportTrigger()) {
           resolve(true);
           return;
         }
