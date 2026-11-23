@@ -72,7 +72,7 @@ async function resolveExportFrame(tabId) {
     const hit = await exec(tabId, fid, () => {
       for (const el of document.querySelectorAll('[data-ui-name="Button.Text"], button')) {
         const t = (el.textContent || "").trim();
-        if (/导出|export/i.test(t)) return { ok: true };
+        if (/导出当前|export current/i.test(t)) return { ok: true };
       }
       return { ok: false };
     });
@@ -166,24 +166,40 @@ function doExportPage(format) {
     el.click?.();
   }
 
+  const CURRENT_PAGE_ONLY = [
+    "导出当前页面",
+    "导出当前页",
+    "Export current page",
+    "Export this page",
+  ];
+  function isCurrentPageExport(text) {
+    const t = norm(text);
+    if (CURRENT_PAGE_ONLY.some((l) => t === l || t.startsWith(l))) return true;
+    return /当前/.test(t) && /导出|export/i.test(t);
+  }
+  function isBulkExportOnly(text) {
+    const t = norm(text);
+    return t === "导出" || t === "Export" || t === "批量导出" || /^export$/i.test(t);
+  }
+
   let trigger = null;
   for (const el of document.querySelectorAll('[data-ui-name="Button.Text"]')) {
-    const t = norm(el.textContent);
-    if (t === "导出" || t.includes("导出当前") || /^export$/i.test(t)) {
+    if (isCurrentPageExport(el.textContent)) {
       trigger = el.closest("button") || el;
       break;
     }
   }
   if (!trigger) {
-    for (const btn of document.querySelectorAll("button")) {
+    for (const btn of document.querySelectorAll("button, [role=\"button\"]")) {
       const t = norm(btn.textContent);
-      if (/^导出/.test(t) || t === "Export") {
+      if (isBulkExportOnly(t)) continue;
+      if (isCurrentPageExport(t)) {
         trigger = btn;
         break;
       }
     }
   }
-  if (!trigger) return { ok: false, reason: "未找到导出按钮（导出/导出当前页面）" };
+  if (!trigger) return { ok: false, reason: "未找到「导出当前页面」（已忽略「导出」）" };
 
   click(trigger);
 
